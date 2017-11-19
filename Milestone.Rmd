@@ -1,0 +1,228 @@
+---
+title: "Capstone - Milestone"
+author: "Kristen Dardia"
+date: "October 8, 2017"
+output:
+  pdf_document: default
+  html_document: default
+  word_document: default
+---
+
+#Introduction
+
+## The purpose of this document is just to explore data.
+
+## The data is from a corpus called HC Corpora (www.corpora.heliohost.org). 
+
+## See the readme file at http://www.corpora.heliohost.org/aboutcorpus.html for details on the corpora available.
+
+##The HC Corpora dataset is comprised of the output of crawls of news sites, blogs and twitter.  The dataset contains 3 files across four languages (Russian, Finnish, German and English). This project will focus on the English language datasets. The names of the data files are as follows:
+
+###en_US.blogs.txt
+###en_US.twitter.txt
+###en_US.news.txt
+
+# Prepare data
+
+## Download data file
+```{r}
+setwd("C:/Users/i62689/Desktop/Capstone")
+en_US_blog <- read.table("en_US.blogs.txt", header=FALSE, fill= TRUE)
+en_US_news <- read.table("en_US.news.txt", header=FALSE, fill= TRUE)
+en_US_twitter <- read.table("en_US.twitter.txt", header=FALSE, fill= TRUE)
+```
+
+
+
+# Basic data information, comment out b\c this take a while to run
+#```{r}
+#nrow(en_US_blog)
+#nrow(en_US_news)
+#nrow(en_US_twitter)
+#max(nchar(en_US_news))
+#max(nchar(en_US_blog))
+#max(nchar(en_US_twitter))
+#min(nchar(en_US_news))
+#min(nchar(en_US_blog))
+#min(nchar(en_US_twitter))
+#```
+
+## en_US_blog has 891694 lines, max entry of 6276219, and min entry of 2774928.
+## en_US_news has 76153 lines, max entry of 501832, and min entry of 232669
+## en_US_twitter has 743363 lines, max entry of 5154455, and min entry of 2397123.
+
+# Reducing processing time
+##There is a lot of data here so we'll just analyze a sample of it to save time. 
+##I will randomly choose 1% of the lines in each file
+
+```{r}
+sample.blog <- en_US_blog[sample(1:nrow(en_US_blog), 0.01*nrow(en_US_blog)), ]
+sample.news <- en_US_news[sample(1:nrow(en_US_news), 0.01*nrow(en_US_news)), ]
+sample.twitter <- en_US_twitter[sample(1:nrow(en_US_twitter), 0.01*nrow(en_US_twitter)), ]
+```
+# Combine into one Corpus
+```{r}
+USdata<-c(sample.blog, sample.news, sample.twitter)
+```
+# Cleaning and exploring data
+## Using tm package for cleaning some words
+```{r}
+#create corpus
+library(tm)
+USdata.corpus <- VCorpus(VectorSource(USdata))
+# remove whitespace
+USdata.corpus <- tm_map(USdata.corpus, stripWhitespace)
+# remove numbers
+USdata.corpus <- tm_map(USdata.corpus, removeNumbers)
+# remove URLs
+removeURL <- function(x) gsub("http[[:alnum:][:punct:]]*", "", x) 
+USdata.corpus <- tm_map(USdata.corpus, content_transformer(removeURL))
+# remove punctuation
+USdata.corpus <- tm_map(USdata.corpus, removePunctuation)
+# convert to lowercase
+USdata.corpus <- tm_map(USdata.corpus, content_transformer(tolower))
+# do a lot here.... get rid of conjunctions and specific words that appear below
+
+```
+
+# Let's do a little exploration on the corpus.  
+```{r}
+dtm <- DocumentTermMatrix(USdata.corpus)
+# First, remove sparse terms to cut down on run time
+inspect(removeSparseTerms(dtm, 0.4))
+# Find words that appear at least 20 times.  There are a lot of them.  
+findFreqTerms(dtm, 20)
+# Find associations (i.e., terms which correlate) with at least 0.8 correlation for the term opec, then
+findAssocs(dtm, "opec", 0.8)
+# Find frequencies
+freq <- sort(colSums(as.matrix(dtm)), decreasing=TRUE)
+wf <- data.frame(word=names(freq), freq=freq)
+# Plot Word Frequencies
+library(ggplot2)
+ggplot(wf[wf$freq>5000, ], aes(x=word, y=freq)) +
+    geom_bar(stat="identity") +
+    theme(axis.text.x=element_text(angle=45, hjust=1)) +
+    xlab("") +
+    ylab("Frequency") +
+    ggtitle("Words that appear over 5,000 times in the three Dataset Sample")
+```
+# There is a high frequency of words such as "the", "and", "that", "you".  This suggests that using a pattern based on word frequency alone will not be sufficient for predicting the next word. So let's tokenize and look at common word patterns.  
+
+## Convert Corpus to plain text document
+```{r}
+library(tm)
+USdata.text <- tm_map(USdata.corpus, PlainTextDocument) 
+# showing some lines of the textcorpus
+for (i in 1:2){
+  print(USdata.text[[i]]$content)
+}
+
+```
+
+# Now let's tokenize (one word, two words, three words, and 4 words).
+# N-gram Frequency
+
+```{r}
+library(RWeka)
+options(java.parameters = "-Xmx8g")
+# if that doesn't work, tryoptions(java.parameters = "-Xmx8000m"), this reduces run time
+
+#unigram
+onetoken <- NGramTokenizer(USdata.text, Weka_control(min = 1, max = 1))
+unigram <- data.frame(table(onetoken))
+unigram <- unigram[order(unigram$Freq,decreasing = TRUE),]
+names(unigram) <- c("word1", "freq")
+head(unigram)
+unigram$word1 <- as.character(unigram$word1)
+
+write.csv(unigram[unigram$freq > 1,],"unigram.csv",row.names=F)
+unigram <- read.csv("unigram.csv",stringsAsFactors = F)
+saveRDS(unigram, file = "unigram.RData")
+
+unigram <- readRDS("unigram.RData")
+g1 <- ggplot(data=unigram[1:10,], aes(x = word1, y = freq))
+g2 <- g1 + geom_bar(stat="identity") + coord_flip() + ggtitle("Frequently Words")
+g3 <- g2 + geom_text(data = unigram[1:10,], aes(x = word1, y = freq, label = freq), hjust=-1, position = "identity")
+g3
+
+#bigram
+twotoken <- NGramTokenizer(USdata.text, Weka_control(min = 2, max = 2))
+bigram <- data.frame(table(twotoken))
+bigram <- bigram[order(bigram$Freq,decreasing = TRUE),]
+names(bigram) <- c("words","freq")
+head(bigram)
+bigram$words <- as.character(bigram$words)
+str2 <- strsplit(bigram$words,split=" ")
+bigram <- transform(bigram, 
+                    one = sapply(str2,"[[",1),   
+                    two = sapply(str2,"[[",2))
+bigram <- data.frame(word1 = bigram$one,word2 = bigram$two,freq = bigram$freq,stringsAsFactors=FALSE)
+
+## saving files 
+write.csv(bigram[bigram$freq > 1,],"bigram.csv",row.names=F)
+bigram <- read.csv("bigram.csv",stringsAsFactors = F)
+saveRDS(bigram,"bigram.RData")
+
+
+#trigram
+threetoken <- NGramTokenizer(USdata.text, Weka_control(min = 3, max = 3))
+trigram <- data.frame(table(threetoken))
+trigram <- trigram[order(trigram$Freq,decreasing = TRUE),]
+names(trigram) <- c("words","freq")
+#tr <- head(trigram, 20)
+#rm(trigram)
+##################### 
+trigram$words <- as.character(trigram$words)
+str3 <- strsplit(trigram$words,split=" ")
+trigram <- transform(trigram,
+                     one = sapply(str3,"[[",1),
+                     two = sapply(str3,"[[",2),
+                     three = sapply(str3,"[[",3))
+# trigram$words <- NULL
+trigram <- data.frame(word1 = trigram$one,word2 = trigram$two, 
+                      word3 = trigram$three, freq = trigram$freq,stringsAsFactors=FALSE)
+# saving files
+write.csv(trigram[trigram$freq > 1,],"trigram.csv",row.names=F)
+trigram <- read.csv("trigram.csv",stringsAsFactors = F)
+saveRDS(trigram,"trigram.RData")
+
+#quad-gram
+fourtoken <- NGramTokenizer(USdata.text, Weka_control(min = 4, max = 4))
+quadgram <- data.frame(table(fourtoken))
+quadgram <- quadgram[order(quadgram$Freq,decreasing = TRUE),]
+names(quadgram) <- c("words","freq")
+#tr <- head(quadgram, 20)
+#rm(quadgram)
+##################### 
+quadgram$words <- as.character(quadgram$words)
+str3 <- strsplit(quadgram$words,split=" ")
+quadgram <- transform(quadgram,
+                     one = sapply(str3,"[[",1),
+                     two = sapply(str3,"[[",2),
+                     three = sapply(str3,"[[",3),
+                     four = sapply(str3,"[[",4))
+# quadgram$words <- NULL
+quadgram <- data.frame(word1 = quadgram$one, word2 = quadgram$two, 
+                      word3 = quadgram$three, word4 = quadgram$four, 
+                      freq = quadgram$freq, stringsAsFactors=FALSE)
+# saving files
+write.csv(quadgram[quadgram$freq > 1,],"quadgram.csv",row.names=F)
+quadgram <- read.csv("quadgram.csv",stringsAsFactors = F)
+saveRDS(quadgram,"quadgram.RData")
+
+```
+#Plans for prediction alogrithm and app
+
+## Allow for text input on application for entering text and a submit button.
+## The app will return the most likely word to follow the string of text entered.
+## Utilize 2-gram, 3-gram or 4-gram datasets.
+## Will have to consider small/common words. 
+## Also, a note for later - consider ".com"" when removing periods.
+
+###The basic methodology for the n-gram text prediction is as follows:
+
+####Generate 1-gram, bigram, and trigram matrices.
+####By summing frequency counts, generate a 2-column table of unique ngrams by frequencies ("N-gram Frequency Table").
+####Match a n-word character string with the appropriate n+1 gram entry in the N-gram Frequency Table. For example, a two-word string should be matched with its corresponding entry in a tri-gram table.
+####If there is a match, propose high frequency words to the user. Continuing the previous example, a match should be the last word of the n-gram.
+
